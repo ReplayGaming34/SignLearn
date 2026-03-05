@@ -1,3 +1,4 @@
+import json as json_module
 import os
 
 import cv2
@@ -43,28 +44,33 @@ def extract_normalized_landmarks(image_rgb):
     if max_value != 0:
         normalized_coords = normalized_coords / max_value
 
-    # 5. Step C: Flattening
-    # Convert [[x1,y1], [x2,y2]...] into [x1, y1, x2, y2...]
-    return normalized_coords.flatten()
+    # 5. flatten the list to a single dimension (21 points * 2 coordinates = 42 features)
+    normalized_coords = normalized_coords.flatten().tolist()
+
+    return normalized_coords
 
 
 def start_processing():
+    os.system("cls" if os.name == "nt" else "clear")
+    print("Processing data...")
+    print("[] 0%\r", end="")
+
     DATA_PATH = r"C:\Users\repla\signLearn\data"
 
     # Use os.scandir to iterate through the main directory
+    letter = 0
+    total_features = []
+    y_train = []
+
     for symbol_entry in os.scandir(DATA_PATH):
         # 1. Skip non-directory files like __init__.py or hidden files
         if not symbol_entry.is_dir() or symbol_entry.name.startswith("."):
             continue
 
-        # 2. Define the path for the processed data folder
-        processed_dir = os.path.join(symbol_entry.path, "processed_data")
-
-        # Create the directory safely if it doesn't exist
-        os.makedirs(processed_dir, exist_ok=True)
-
-        # 3. Iterate through images in the symbol's directory
-        for file_entry in os.scandir(f"{symbol_entry.path}/raw_data"):
+        # 2. Iterate through images in the symbol's directory
+        count = 0
+        percent = 0
+        for file_entry in os.scandir(f"{symbol_entry.path}"):
             # Process only files (images), skipping the 'processed_data' folder itself
             if file_entry.is_file() and not file_entry.name.startswith("."):
                 # Load image with OpenCV to pass RGB data to MediaPipe
@@ -74,10 +80,37 @@ def start_processing():
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
                 # Extract landmarks
-                landmarks = extract_normalized_landmarks(image_rgb)
+                if extract_normalized_landmarks(image_rgb) is None:
+                    continue
+                coords = extract_normalized_landmarks(image_rgb)
+                total_features.append(coords)
+                y_train.append(letter)
+                count += 1
 
-                if landmarks is not None:
-                    # 4. Save coords as an .npy file using the original filename
-                    output_filename = f"{os.path.splitext(file_entry.name)[0]}.npy"
-                    output_path = os.path.join(processed_dir, output_filename)
-                    np.save(output_path, landmarks)
+                if count == int(len(os.listdir(f"{symbol_entry.path}")) / 100):
+                    count = 0
+                    percent += 1
+                    os.system("cls" if os.name == "nt" else "clear")
+                    print("Processing data for symbol: " + symbol_entry.name)
+                    print(f"[{'#' * percent}] {percent}%\r", end="")
+
+        letter += 1
+
+    x_train_filename = os.path.join(DATA_PATH, "x_train.npy")
+    y_train_filename = os.path.join(DATA_PATH, "y_train.npy")
+
+    if total_features:
+        np.save(x_train_filename, np.array(total_features))
+        np.save(y_train_filename, np.array(y_train))
+
+    # Create the translation map: {0: "A", 1: "B", ...}
+    symbols = [
+        d.name
+        for d in os.scandir(DATA_PATH)
+        if d.is_dir() and not d.name.startswith(".")
+    ]
+    label_map = {i: name for i, name in enumerate(symbols)}
+
+    # Save it so Streamlit app can load it later
+    with open(os.path.join(DATA_PATH, "label_map.json"), "w") as f:
+        json_module.dump(label_map, f)
